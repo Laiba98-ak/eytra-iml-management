@@ -134,13 +134,16 @@ export default function Customers() {
       <div className="bg-white rounded-lg border border-gray-300 p-6">
         <div className="flex items-center gap-4">
           <input
-            type="checkbox"
-            className="w-6 h-6 rounded border-gray-300 focus:ring-2 focus:ring-blue-500 cursor-pointer"
+            type="text"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Search by name or email..."
+            className="flex-1 border border-gray-300 rounded-lg px-4 py-2 text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
           <select
             value={typeFilter}
             onChange={(e) => setTypeFilter(e.target.value)}
-            className="flex-1 border border-gray-300 rounded-lg px-4 py-2 text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-48 border border-gray-300 rounded-lg px-4 py-2 text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option>All Types</option>
             <option>Doctor</option>

@@ -960,6 +960,7 @@ export default function DeliveryOrders() {
                   <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Customer</th>
                   <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">PO Number</th>
                   <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Date</th>
+                  <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Items</th>
                   <th className="px-6 py-3 text-center text-sm font-semibold text-gray-900">Action</th>
                 </tr>
               </thead>
@@ -972,6 +973,7 @@ export default function DeliveryOrders() {
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-600">{do_.po_number}</td>
                     <td className="px-6 py-4 text-sm text-gray-600">{formatDateDisplay(do_.document_date, 'short')}</td>
+                    <td className="px-6 py-4 text-sm text-gray-600">{itemCounts[do_.id] || 0} items</td>
                     <td className="px-6 py-4 text-center space-x-3">
                       <button
                         onClick={() => handleViewDO(do_.id)}
