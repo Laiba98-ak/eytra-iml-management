@@ -36,7 +36,7 @@ export default function Customers() {
     try {
       const { data } = await supabase.from('customers').select('*').order('name')
       setCustomers(data || [])
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error:', err)
     }
   }
@@ -83,7 +83,7 @@ export default function Customers() {
       setFormData({ name: '', type: 'Doctor', email: '', phone: '' })
       setShowForm(false)
       fetchCustomers()
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error:', err)
       alert('Failed to add customer')
     } finally {
@@ -99,7 +99,7 @@ export default function Customers() {
       if (error) throw error
       alert('Customer deleted!')
       fetchCustomers()
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error:', err)
       alert('Failed to delete customer')
     }

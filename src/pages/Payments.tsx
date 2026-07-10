@@ -61,7 +61,7 @@ export default function Payments() {
       
       setCustomers(customersData || [])
       setPayments(paymentsData || [])
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error:', err)
     }
   }

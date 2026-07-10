@@ -103,7 +103,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
           timestamp: new Date(p.created_at).getTime()
         }))
       )
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error:', err)
     } finally {
       setLoading(false)

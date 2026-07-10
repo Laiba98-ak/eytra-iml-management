@@ -111,7 +111,7 @@ export default function Invoices() {
       setCustomers(customersData || [])
       setProducts(productsData || [])
       setSavedInvoices(invoicesData || [])
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error:', err)
     }
   }
@@ -146,7 +146,7 @@ export default function Invoices() {
       } else {
         setSerialNumber('INV-ERA-200')
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error generating preview number:', err)
       setSerialNumber('')
     }
@@ -432,7 +432,7 @@ export default function Invoices() {
       showToast(`Invoice ${documentNumber} saved! Stock updated and PKR ${invoiceTotal.toLocaleString()} added to ${selectedCustomer?.name}'s balance.`)
       setJustSaved(true)
       fetchData()
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error saving:', err)
       alert(`Failed to save invoice: ${err?.message || JSON.stringify(err)}`)
     } finally {
@@ -511,7 +511,7 @@ export default function Invoices() {
       showToast('Invoice deleted! Stock restored and balance adjusted.')
       fetchData()
       generateSerialNumber()
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error deleting:', err)
       alert(`Failed to delete invoice: ${err?.message || JSON.stringify(err)}`)
     }
@@ -562,7 +562,7 @@ export default function Invoices() {
       setViewingItems(itemRows || [])
       setViewingCustomer(customer)
       setShowSavedView(true)
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error loading invoice:', err)
       alert(`Failed to open invoice: ${err?.message || JSON.stringify(err)}`)
     } finally {
@@ -609,7 +609,7 @@ export default function Invoices() {
       const xOffset = (pageWidth - imgWidth) / 2
       pdf.addImage(imgData, 'PNG', xOffset, 0, imgWidth, imgHeight)
       pdf.save(`${filename || serialNumber}.pdf`)
-    } catch (err) {
+    } catch (err: any) {
       console.error('PDF generation error:', err)
       alert('PDF download failed')
     }

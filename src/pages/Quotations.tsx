@@ -124,7 +124,7 @@ export default function Quotations() {
       setProducts(productsData || [])
       setSavedQuotations(quotationsData || [])
       setItemCounts(counts)
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error:', err)
     }
   }
@@ -167,7 +167,7 @@ export default function Quotations() {
       } else {
         setSerialNumber('ERA-200')
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error generating preview number:', err)
       setSerialNumber('')
     }
@@ -313,7 +313,7 @@ export default function Quotations() {
       showToast(`Quotation ${documentNumber} saved successfully!`)
       setJustSaved(true)
       fetchData()
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error saving:', err)
       alert(`Failed to save quotation: ${err?.message || JSON.stringify(err)}`)
     } finally {
@@ -336,7 +336,7 @@ export default function Quotations() {
       showToast('Quotation deleted!')
       fetchData()
       generateSerialNumber()
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error deleting:', err)
       alert(`Failed to delete quotation: ${err?.message || JSON.stringify(err)}`)
     }
@@ -372,7 +372,7 @@ export default function Quotations() {
       setViewingItems(itemRows || [])
       setViewingCustomer(customer)
       setShowSavedView(true)
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error loading quotation:', err)
       alert(`Failed to open quotation: ${err?.message || JSON.stringify(err)}`)
     } finally {
@@ -422,7 +422,7 @@ export default function Quotations() {
       const imgHeight = (canvas.height * imgWidth) / canvas.width
       pdf.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight)
       pdf.save(`${filename || serialNumber}.pdf`)
-    } catch (err) {
+    } catch (err: any) {
       console.error('PDF generation error:', err)
       alert('PDF download failed')
     }

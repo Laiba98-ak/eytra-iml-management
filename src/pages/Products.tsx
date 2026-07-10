@@ -46,7 +46,7 @@ export default function Products() {
     try {
       const { data } = await supabase.from('products').select('*').order('sku')
       setProducts(data || [])
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error:', err)
     }
   }
@@ -95,7 +95,7 @@ export default function Products() {
       setFormData({ sku: '', name: '', category: 'IOL Lens' })
       setShowForm(false)
       fetchProducts()
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error:', err)
       alert('Failed to add product')
     } finally {
@@ -119,7 +119,7 @@ export default function Products() {
       fetchProducts()
       setShowStockView(false)
       setSelectedProduct(null)
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error:', err)
       alert('Failed to update stock')
     } finally {
@@ -135,7 +135,7 @@ export default function Products() {
       if (error) throw error
       alert('Product deleted!')
       fetchProducts()
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error:', err)
       alert('Failed to delete product')
     }
@@ -168,7 +168,7 @@ export default function Products() {
       fetchProducts()
       setShowSimpleStockView(false)
       setSelectedProduct(null)
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error:', err)
       alert('Failed to update stock')
     } finally {
@@ -193,7 +193,7 @@ export default function Products() {
       fetchProducts()
       setShowSimpleStockView(false)
       setSelectedProduct(null)
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error:', err)
       alert('Failed to clear stock')
     } finally {

@@ -113,7 +113,7 @@ export default function DeliveryOrders() {
       setProducts(productsData || [])
       setSavedDeliveryOrders(doData || [])
       setItemCounts(counts)
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error:', err)
     }
   }
@@ -156,7 +156,7 @@ export default function DeliveryOrders() {
       } else {
         setSerialNumber('DO-ERA-200')
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error generating preview number:', err)
       setSerialNumber('')
     }
@@ -310,7 +310,7 @@ export default function DeliveryOrders() {
       showToast(`Delivery Order ${documentNumber} saved successfully!`)
       setJustSaved(true)
       fetchData()
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error saving:', err)
       alert(`Failed to save delivery order: ${err?.message || JSON.stringify(err)}`)
     } finally {
@@ -333,7 +333,7 @@ export default function DeliveryOrders() {
       showToast('Delivery Order deleted!')
       fetchData()
       generateSerialNumber()
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error deleting:', err)
       alert(`Failed to delete delivery order: ${err?.message || JSON.stringify(err)}`)
     }
@@ -369,7 +369,7 @@ export default function DeliveryOrders() {
       setViewingItems(itemRows || [])
       setViewingCustomer(customer)
       setShowSavedView(true)
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error loading delivery order:', err)
       alert(`Failed to open delivery order: ${err?.message || JSON.stringify(err)}`)
     } finally {
@@ -420,7 +420,7 @@ export default function DeliveryOrders() {
       const imgHeight = (canvas.height * imgWidth) / canvas.width
       pdf.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight)
       pdf.save(`${filename || serialNumber}.pdf`)
-    } catch (err) {
+    } catch (err: any) {
       console.error('PDF generation error:', err)
       alert('PDF download failed')
     }
