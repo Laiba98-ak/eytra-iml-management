@@ -118,17 +118,6 @@ export default function DeliveryOrders() {
     }
   }
 
-  const isDiopterProduct = (productId: string) => {
-    const product = products.find(p => p.id === productId)
-    return !!(product?.stock_by_diopter && Object.keys(product.stock_by_diopter).length > 0)
-  }
-
-  const getProductDiopters = (productId: string) => {
-    const product = products.find(p => p.id === productId)
-    if (!product?.stock_by_diopter) return []
-    return Object.keys(product.stock_by_diopter).sort((a, b) => parseFloat(a) - parseFloat(b))
-  }
-
   const getLiveMaxDocumentNumber = async () => {
     const [{ data: invRows }, { data: quotRows }, { data: doRows }] = await Promise.all([
       supabase.from('invoices').select('document_number'),
@@ -171,12 +160,10 @@ export default function DeliveryOrders() {
       if (item.id === id) {
         if (field === 'productId') {
           const product = products.find(p => p.id === value)
-          const validDiopters = getProductDiopters(value)
           return {
             ...item,
             productId: value,
-            productName: product?.name || '',
-            diopter: validDiopters.length > 0 ? validDiopters[0] : ''
+            productName: product?.name || ''
           }
         }
         return { ...item, [field]: value }
@@ -291,13 +278,12 @@ export default function DeliveryOrders() {
 
       const doItemRows = items.map(item => {
         const product = fullProducts?.find(p => p.id === item.productId)
-        const isDiopterProd = product?.stock_by_diopter && Object.keys(product.stock_by_diopter).length > 0
         return {
           delivery_order_id: savedDO.id,
           product_id: item.productId,
           product_name_snapshot: item.productName,
           product_sku_snapshot: product?.sku || null,
-          diopter_snapshot: isDiopterProd ? parseFloat(item.diopter) : null,
+          diopter_snapshot: null,
           quantity: item.quantity,
           unit_price: item.unitPrice,
           line_total: item.quantity * item.unitPrice
@@ -525,7 +511,6 @@ export default function DeliveryOrders() {
                     <td className="border border-gray-800 px-3 py-2 text-sm text-gray-900">{idx + 1}</td>
                     <td className="border border-gray-800 px-3 py-2 text-sm text-gray-900">
                       <p className="font-medium">{item.product_name_snapshot}</p>
-                      {item.diopter_snapshot != null && <p className="text-xs text-gray-600">Diopter: {item.diopter_snapshot} D</p>}
                     </td>
                     <td className="border border-gray-800 px-3 py-2 text-center text-sm text-gray-900">{item.quantity}</td>
                     <td className="border border-gray-800 px-3 py-2 text-right text-sm text-gray-900">Rs. {Number(item.unit_price).toLocaleString()}</td>
@@ -659,7 +644,6 @@ export default function DeliveryOrders() {
                     <td className="border border-gray-800 px-3 py-2 text-sm text-gray-900">{idx + 1}</td>
                     <td className="border border-gray-800 px-3 py-2 text-sm text-gray-900">
                       <p className="font-medium">{item.productName}</p>
-                      {isDiopterProduct(item.productId) && <p className="text-xs text-gray-600">Diopter: {item.diopter} D</p>}
                     </td>
                     <td className="border border-gray-800 px-3 py-2 text-center text-sm text-gray-900">{item.quantity}</td>
                     <td className="border border-gray-800 px-3 py-2 text-right text-sm text-gray-900">Rs. {item.unitPrice.toLocaleString()}</td>
@@ -844,20 +828,6 @@ export default function DeliveryOrders() {
                             ))}
                           </select>
                         </div>
-                        {isDiopterProduct(item.productId) && (
-                          <div>
-                            <label className="text-xs text-gray-600 font-medium block mb-1">Diopter</label>
-                            <select
-                              value={item.diopter}
-                              onChange={(e) => updateItem(item.id, 'diopter', e.target.value)}
-                              className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            >
-                              {getProductDiopters(item.productId).map(d => (
-                                <option key={d} value={d}>{d} D</option>
-                              ))}
-                            </select>
-                          </div>
-                        )}
                         <div>
                           <label className="text-xs text-gray-600 font-medium block mb-1">Qty</label>
                           <input
