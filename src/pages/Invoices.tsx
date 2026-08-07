@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 interface Customer {
   id: string
@@ -97,6 +97,13 @@ export default function Invoices() {
   const [viewingItems, setViewingItems] = useState<any[]>([])
   const [viewingCustomer, setViewingCustomer] = useState<Customer | null>(null)
   const [viewLoading, setViewLoading] = useState(false)
+  const qtyInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
+
+  // Number inputs/selects otherwise silently change value when the page is scrolled
+  // while they're focused — blur on wheel so scrolling never edits a line item.
+  const blurOnWheel = (e: React.WheelEvent<HTMLElement>) => {
+    e.currentTarget.blur()
+  }
 
   useEffect(() => {
     fetchData()
@@ -117,10 +124,12 @@ export default function Invoices() {
   }
 
   const getLiveMaxDocumentNumber = async () => {
+    // Explicit high limit — Supabase/PostgREST caps unbounded selects at 1000 rows by
+    // default, which would silently truncate the max-number scan once any table grows past that.
     const [{ data: invRows }, { data: quotRows }, { data: doRows }] = await Promise.all([
-      supabase.from('invoices').select('document_number'),
-      supabase.from('quotations').select('document_number'),
-      supabase.from('delivery_orders').select('document_number')
+      supabase.from('invoices').select('document_number').limit(100000),
+      supabase.from('quotations').select('document_number').limit(100000),
+      supabase.from('delivery_orders').select('document_number').limit(100000)
     ])
 
     const allNumbers = [
@@ -263,6 +272,11 @@ export default function Invoices() {
       alert('Please add at least one item')
       return
     }
+    // A Qty box left blank (not yet blurred) holds a transient 0 in state — clamp it
+    // back to 1 now so the preview/save never carries a 0-quantity line.
+    if (items.some(i => !i.quantity || i.quantity < 1)) {
+      setItems(items.map(i => (!i.quantity || i.quantity < 1) ? { ...i, quantity: 1 } : i))
+    }
     setShowPreview(true)
   }
 
@@ -276,16 +290,15 @@ export default function Invoices() {
       return
     }
 
+    if (items.some(i => !i.productId)) {
+      alert('Please select a product for every item before saving.')
+      return
+    }
+
     setLoading(true)
     try {
       // Fetch full product records for the items on this invoice
-      const productIds = [...new Set(items.map(i => i.productId).filter(Boolean))]
-
-      if (productIds.length === 0) {
-        alert('Please select a product for every item before saving.')
-        setLoading(false)
-        return
-      }
+      const productIds = [...new Set(items.map(i => i.productId))]
 
       const { data: fullProducts, error: productsFetchError } = await supabase
         .from('products')
@@ -334,11 +347,20 @@ export default function Invoices() {
 
       if (counterUpdateError) throw counterUpdateError
 
-      // Compute amounts
+      // Compute amounts. previousBalance/newBalanceDue track the customer's REAL running
+      // balance and must always include the full sale value regardless of the "Include
+      // Previous Balance" checkbox below — that checkbox only controls what gets PRINTED
+      // on this invoice, not what the customer actually owes going forward.
       const previousBalance = selectedCustomer?.previous_balance || 0
       const taxAmount = 0 // 0% tax for this business
       const invoiceTotal = subtotal + taxAmount
       const newBalanceDue = previousBalance + invoiceTotal
+
+      // What gets stored/reprinted on the invoice itself must match what the checkbox
+      // showed on the preview the user already saw (and may have sent as a PDF) —
+      // otherwise re-opening the saved invoice later shows a different Total Due.
+      const displayPreviousBalance = formData.includePreviousBalance ? previousBalance : 0
+      const displayBalanceDue = formData.includePreviousBalance ? newBalanceDue : invoiceTotal
 
       // Save the invoice header
       const { data: savedInvoice, error: invoiceError } = await supabase
@@ -352,10 +374,10 @@ export default function Invoices() {
           subtotal: subtotal,
           tax_percentage: 0,
           tax_amount: taxAmount,
-          previous_balance: previousBalance,
+          previous_balance: displayPreviousBalance,
           total: invoiceTotal,
           amount_paid: 0,
-          balance_due: newBalanceDue,
+          balance_due: displayBalanceDue,
           status: 'Confirmed',
           notes: formData.notes
         }])
@@ -381,7 +403,12 @@ export default function Invoices() {
       })
 
       const { error: itemsError } = await supabase.from('invoice_items').insert(invoiceItemRows)
-      if (itemsError) throw itemsError
+      if (itemsError) {
+        // Nothing was deducted/charged yet at this point — undo the header insert so a
+        // failed save never leaves a phantom invoice with a total but no line items.
+        await supabase.from('invoices').delete().eq('id', savedInvoice.id)
+        throw itemsError
+      }
 
       // Deduct stock for each item — accumulate ALL changes per product first, so multiple
       // diopters/lines of the SAME product don't overwrite each other's deductions.
@@ -407,20 +434,20 @@ export default function Invoices() {
       }
 
       for (const [productId, update] of Object.entries(stockUpdates)) {
-        if (update.type === 'diopter') {
-          await supabase.from('products').update({ stock_by_diopter: update.diopterStock }).eq('id', productId)
-        } else {
-          await supabase.from('products').update({ stock_quantity: update.quantity }).eq('id', productId)
-        }
+        const { error: stockError } = update.type === 'diopter'
+          ? await supabase.from('products').update({ stock_by_diopter: update.diopterStock }).eq('id', productId)
+          : await supabase.from('products').update({ stock_quantity: update.quantity }).eq('id', productId)
+        if (stockError) throw stockError
       }
 
       // Update customer's outstanding balance to the new cumulative balance
-      await supabase.from('customers').update({ previous_balance: newBalanceDue }).eq('id', formData.customerId)
+      const { error: balanceError } = await supabase.from('customers').update({ previous_balance: newBalanceDue }).eq('id', formData.customerId)
+      if (balanceError) throw balanceError
 
       // Record this transaction in the ledger
-      await supabase.from('ledger_entries').insert([{
+      const { error: ledgerError } = await supabase.from('ledger_entries').insert([{
         customer_id: formData.customerId,
-        transaction_type: 'invoice',
+        transaction_type: 'Invoice',
         reference_id: savedInvoice.id,
         transaction_date: formData.date,
         description: `Invoice ${documentNumber}`,
@@ -428,7 +455,11 @@ export default function Invoices() {
         credit_amount: 0,
         running_balance: newBalanceDue
       }])
+      if (ledgerError) throw ledgerError
 
+      // Keep the preview/PDF in sync with the number actually claimed in the DB — if another
+      // document was saved elsewhere in between, the pre-save preview's number is now stale.
+      setSerialNumber(documentNumber)
       showToast(`Invoice ${documentNumber} saved! Stock updated and PKR ${invoiceTotal.toLocaleString()} added to ${selectedCustomer?.name}'s balance.`)
       setJustSaved(true)
       fetchData()
@@ -489,12 +520,20 @@ export default function Invoices() {
         }
       }
 
-      // Reverse the balance this invoice added
+      // Reverse the balance this invoice added. Re-fetch the balance right before
+      // adjusting it (rather than trusting the possibly-stale `customers` list already
+      // in state) so two deletes done in quick succession don't both compute their new
+      // balance from the same starting number.
       if (invoice) {
-        const customer = customers.find(c => c.id === invoice.customer_id)
-        if (customer) {
-          const newBalance = Math.max(0, Number(customer.previous_balance || 0) - Number(invoice.total || 0))
-          await supabase.from('customers').update({ previous_balance: newBalance }).eq('id', customer.id)
+        const { data: freshCustomer } = await supabase
+          .from('customers')
+          .select('previous_balance')
+          .eq('id', invoice.customer_id)
+          .single()
+
+        if (freshCustomer) {
+          const newBalance = Math.max(0, Number(freshCustomer.previous_balance || 0) - Number(invoice.total || 0))
+          await supabase.from('customers').update({ previous_balance: newBalance }).eq('id', invoice.customer_id)
         }
       }
 
@@ -1042,6 +1081,7 @@ export default function Invoices() {
                           value={bulkUnitPrice || ''}
                           onChange={(e) => setBulkUnitPrice(Number(e.target.value) || 0)}
                           onFocus={(e) => e.target.select()}
+                          onWheel={blurOnWheel}
                           className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                           placeholder="Same price for all"
                           min="0"
@@ -1092,6 +1132,13 @@ export default function Invoices() {
                             <select
                               value={item.diopter}
                               onChange={(e) => updateItem(item.id, 'diopter', e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault()
+                                  qtyInputRefs.current[item.id]?.focus()
+                                }
+                              }}
+                              onWheel={blurOnWheel}
                               className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                             >
                               {getProductDiopters(item.productId).map(d => (
@@ -1103,13 +1150,23 @@ export default function Invoices() {
                         <div>
                           <label className="text-xs text-gray-600 font-medium block mb-1">Qty</label>
                           <input
+                            ref={(el) => { qtyInputRefs.current[item.id] = el }}
                             type="number"
-                            value={item.quantity || ''}
+                            value={item.quantity === 0 ? '' : item.quantity}
                             onChange={(e) => {
-                              const val = e.target.value;
-                              updateItem(item.id, 'quantity', val === '' ? 1 : Math.max(1, Number(val)));
+                              const val = e.target.value
+                              if (val === '') {
+                                updateItem(item.id, 'quantity', 0)
+                                return
+                              }
+                              const num = Number(val)
+                              if (!isNaN(num)) updateItem(item.id, 'quantity', Math.max(0, num))
+                            }}
+                            onBlur={() => {
+                              if (!item.quantity || item.quantity < 1) updateItem(item.id, 'quantity', 1)
                             }}
                             onFocus={(e) => e.target.select()}
+                            onWheel={blurOnWheel}
                             className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                             min="1"
                           />
@@ -1121,6 +1178,7 @@ export default function Invoices() {
                             value={item.unitPrice || ''}
                             onChange={(e) => updateItem(item.id, 'unitPrice', Number(e.target.value) || 0)}
                             onFocus={(e) => e.target.select()}
+                            onWheel={blurOnWheel}
                             className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                             placeholder="0"
                             min="0"

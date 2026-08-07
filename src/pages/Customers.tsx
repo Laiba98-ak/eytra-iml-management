@@ -14,6 +14,7 @@ export default function Customers() {
   const [customers, setCustomers] = useState<Customer[]>([])
   const [filteredCustomers, setFilteredCustomers] = useState<Customer[]>([])
   const [showForm, setShowForm] = useState(false)
+  const [editingCustomerId, setEditingCustomerId] = useState<string | null>(null)
   const [typeFilter, setTypeFilter] = useState('All Types')
   const [searchTerm, setSearchTerm] = useState('')
   const [loading, setLoading] = useState(false)
@@ -21,7 +22,8 @@ export default function Customers() {
     name: '',
     type: 'Doctor',
     email: '',
-    phone: ''
+    phone: '',
+    previousBalance: 0
   })
 
   useEffect(() => {
@@ -58,7 +60,7 @@ export default function Customers() {
     setFilteredCustomers(filtered)
   }
 
-  const handleAddCustomer = async (e: React.FormEvent) => {
+  const handleSubmitCustomer = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!formData.name) {
       alert('Please enter customer name')
@@ -67,28 +69,63 @@ export default function Customers() {
 
     setLoading(true)
     try {
-      const { error } = await supabase.from('customers').insert([
-        {
-          name: formData.name,
-          type: formData.type,
-          email: formData.email || null,
-          phone: formData.phone || null,
-          previous_balance: 0
-        }
-      ])
+      if (editingCustomerId) {
+        const { error } = await supabase
+          .from('customers')
+          .update({
+            name: formData.name,
+            type: formData.type,
+            email: formData.email || null,
+            phone: formData.phone || null,
+            previous_balance: formData.previousBalance
+          })
+          .eq('id', editingCustomerId)
 
-      if (error) throw error
+        if (error) throw error
 
-      alert(`Customer ${formData.name} added successfully!`)
-      setFormData({ name: '', type: 'Doctor', email: '', phone: '' })
-      setShowForm(false)
+        alert(`Customer ${formData.name} updated successfully!`)
+      } else {
+        const { error } = await supabase.from('customers').insert([
+          {
+            name: formData.name,
+            type: formData.type,
+            email: formData.email || null,
+            phone: formData.phone || null,
+            previous_balance: 0
+          }
+        ])
+
+        if (error) throw error
+
+        alert(`Customer ${formData.name} added successfully!`)
+      }
+
+      handleCancelForm()
       fetchCustomers()
     } catch (err: any) {
       console.error('Error:', err)
-      alert('Failed to add customer')
+      alert(`Failed to save customer: ${err?.message || JSON.stringify(err)}`)
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleEditCustomer = (customer: Customer) => {
+    setEditingCustomerId(customer.id)
+    setFormData({
+      name: customer.name,
+      type: customer.type,
+      email: customer.email || '',
+      phone: customer.phone || '',
+      previousBalance: customer.previous_balance || 0
+    })
+    setShowForm(true)
+  }
+
+  const handleCancelForm = () => {
+    setShowForm(false)
+    setEditingCustomerId(null)
+    setFormData({ name: '', type: 'Doctor', email: '', phone: '', previousBalance: 0 })
   }
 
   const handleDeleteCustomer = async (customerId: string) => {
@@ -101,13 +138,16 @@ export default function Customers() {
       fetchCustomers()
     } catch (err: any) {
       console.error('Error:', err)
-      alert('Failed to delete customer')
+      const isFkViolation = err?.code === '23503'
+      alert(isFkViolation
+        ? 'This customer has saved invoices/quotations/delivery orders or payments and can\'t be deleted.'
+        : `Failed to delete customer: ${err?.message || JSON.stringify(err)}`)
     }
   }
 
   const totalCustomers = customers.length
   const totalOutstanding = customers.reduce((sum, c) => sum + (c.previous_balance || 0), 0)
-  const activeThisMonth = customers.length
+  const withBalance = customers.filter(c => (c.previous_balance || 0) > 0).length
 
   const getTypeColor = (type: string) => {
     switch (type) {
@@ -151,7 +191,11 @@ export default function Customers() {
             <option>Clinic</option>
           </select>
           <button
-            onClick={() => setShowForm(true)}
+            onClick={() => {
+              setEditingCustomerId(null)
+              setFormData({ name: '', type: 'Doctor', email: '', phone: '', previousBalance: 0 })
+              setShowForm(true)
+            }}
             className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg font-medium transition"
           >
             Add<br/>Customer
@@ -167,19 +211,19 @@ export default function Customers() {
         </div>
         <div className="bg-red-50 border border-red-200 rounded-lg p-6">
           <p className="text-gray-600 text-sm mb-2">Total Outstanding</p>
-          <p className="text-3xl font-bold text-gray-900">PKR {(totalOutstanding / 1000).toFixed(0)}k</p>
+          <p className="text-3xl font-bold text-gray-900">PKR {totalOutstanding.toLocaleString()}</p>
         </div>
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
-          <p className="text-gray-600 text-sm mb-2">Active This Month</p>
-          <p className="text-3xl font-bold text-gray-900">{activeThisMonth}</p>
+          <p className="text-gray-600 text-sm mb-2">Customers With a Balance</p>
+          <p className="text-3xl font-bold text-gray-900">{withBalance}</p>
         </div>
       </div>
 
-      {/* Add Customer Form */}
+      {/* Add/Edit Customer Form */}
       {showForm && (
         <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h3 className="text-xl font-bold mb-6">Add New Customer</h3>
-          <form onSubmit={handleAddCustomer} className="space-y-4">
+          <h3 className="text-xl font-bold mb-6">{editingCustomerId ? 'Edit Customer' : 'Add New Customer'}</h3>
+          <form onSubmit={handleSubmitCustomer} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-semibold mb-2 text-gray-900">Name</label>
@@ -224,6 +268,27 @@ export default function Customers() {
                   placeholder="+92-XXX-XXXXXXX"
                 />
               </div>
+              {editingCustomerId && (
+                <div>
+                  <label className="block text-sm font-semibold mb-2 text-gray-900">Outstanding Balance (PKR)</label>
+                  <input
+                    type="number"
+                    value={formData.previousBalance === 0 ? '' : formData.previousBalance}
+                    onChange={(e) => {
+                      const val = e.target.value
+                      if (val === '') { setFormData({...formData, previousBalance: 0}); return }
+                      const num = Number(val)
+                      if (!isNaN(num)) setFormData({...formData, previousBalance: Math.max(0, num)})
+                    }}
+                    onFocus={(e) => e.target.select()}
+                    onWheel={(e) => e.currentTarget.blur()}
+                    className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="0"
+                    min="0"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Manual correction only — normally this updates automatically from invoices and payments.</p>
+                </div>
+              )}
             </div>
             <div className="flex gap-3 pt-4">
               <button
@@ -231,14 +296,11 @@ export default function Customers() {
                 disabled={loading}
                 className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg font-medium transition disabled:bg-gray-400"
               >
-                {loading ? 'Adding...' : 'Add Customer'}
+                {loading ? 'Saving...' : editingCustomerId ? 'Update Customer' : 'Add Customer'}
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setShowForm(false)
-                  setFormData({ name: '', type: 'Doctor', email: '', phone: '' })
-                }}
+                onClick={handleCancelForm}
                 className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg font-medium hover:bg-gray-50 transition"
               >
                 Cancel
@@ -290,7 +352,13 @@ export default function Customers() {
                       Active
                     </span>
                   </td>
-                  <td className="px-6 py-4 text-center">
+                  <td className="px-6 py-4 text-center space-x-3">
+                    <button
+                      onClick={() => handleEditCustomer(customer)}
+                      className="text-indigo-600 hover:text-indigo-700 font-medium text-sm"
+                    >
+                      Edit
+                    </button>
                     <button
                       onClick={() => handleDeleteCustomer(customer.id)}
                       className="text-red-600 hover:text-red-700 font-medium text-sm"

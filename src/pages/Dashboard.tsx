@@ -97,11 +97,14 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
       })
 
       setRecentActivity(
-        (payments || []).map(p => ({
-          label: `Payment received: PKR ${(p.amount || 0).toLocaleString()} from ${p.customer_name}`,
-          timeAgo: timeAgo(p.created_at),
-          timestamp: new Date(p.created_at).getTime()
-        }))
+        (payments || []).map(p => {
+          const customerName = (customers || []).find(c => c.id === p.customer_id)?.name || 'Unknown'
+          return {
+            label: `Payment received: PKR ${(p.amount || 0).toLocaleString()} from ${customerName}`,
+            timeAgo: timeAgo(p.created_at),
+            timestamp: new Date(p.created_at).getTime()
+          }
+        })
       )
     } catch (err: any) {
       console.error('Error:', err)

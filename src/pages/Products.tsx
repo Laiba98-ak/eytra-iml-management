@@ -27,6 +27,7 @@ export default function Products() {
   const [products, setProducts] = useState<Product[]>([])
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
   const [showForm, setShowForm] = useState(false)
+  const [editingProductId, setEditingProductId] = useState<string | null>(null)
   const [showStockView, setShowStockView] = useState(false)
   const [loading, setLoading] = useState(false)
   const [formData, setFormData] = useState({
@@ -62,7 +63,7 @@ export default function Products() {
     return product.stock_quantity || 0
   }
 
-  const handleAddProduct = async (e: React.FormEvent) => {
+  const handleSubmitProduct = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!formData.sku || !formData.name) {
       alert('Please fill SKU and Name')
@@ -71,36 +72,69 @@ export default function Products() {
 
     setLoading(true)
     try {
-      const isIolLens = formData.category === 'IOL Lens'
-      const initialStock: StockData = {}
-      if (isIolLens) {
-        diopters.forEach(d => {
-          initialStock[d] = 0
-        })
+      if (editingProductId) {
+        // Stock (stock_by_diopter / stock_quantity) is managed separately via "Manage
+        // Stock" — editing here only touches identity fields, never existing stock.
+        const { error } = await supabase
+          .from('products')
+          .update({
+            sku: formData.sku,
+            name: formData.name,
+            category: formData.category
+          })
+          .eq('id', editingProductId)
+
+        if (error) throw error
+
+        alert(`Product ${formData.name} updated successfully!`)
+      } else {
+        const isIolLens = formData.category === 'IOL Lens'
+        const initialStock: StockData = {}
+        if (isIolLens) {
+          diopters.forEach(d => {
+            initialStock[d] = 0
+          })
+        }
+
+        const { error } = await supabase.from('products').insert([
+          {
+            sku: formData.sku,
+            name: formData.name,
+            category: formData.category,
+            stock_by_diopter: initialStock,
+            stock_quantity: 0
+          }
+        ])
+
+        if (error) throw error
+
+        alert(`Product ${formData.name} added successfully!`)
       }
 
-      const { error } = await supabase.from('products').insert([
-        {
-          sku: formData.sku,
-          name: formData.name,
-          category: formData.category,
-          stock_by_diopter: initialStock,
-          stock_quantity: 0
-        }
-      ])
-
-      if (error) throw error
-
-      alert(`Product ${formData.name} added successfully!`)
-      setFormData({ sku: '', name: '', category: 'IOL Lens' })
-      setShowForm(false)
+      handleCancelForm()
       fetchProducts()
     } catch (err: any) {
       console.error('Error:', err)
-      alert('Failed to add product')
+      alert(`Failed to save product: ${err?.message || JSON.stringify(err)}`)
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleEditProduct = (product: Product) => {
+    setEditingProductId(product.id)
+    setFormData({
+      sku: product.sku,
+      name: product.name,
+      category: product.category
+    })
+    setShowForm(true)
+  }
+
+  const handleCancelForm = () => {
+    setShowForm(false)
+    setEditingProductId(null)
+    setFormData({ sku: '', name: '', category: 'IOL Lens' })
   }
 
   const handleUpdateStock = async () => {
@@ -137,7 +171,10 @@ export default function Products() {
       fetchProducts()
     } catch (err: any) {
       console.error('Error:', err)
-      alert('Failed to delete product')
+      const isFkViolation = err?.code === '23503'
+      alert(isFkViolation
+        ? 'This product is used on one or more saved invoices/quotations/delivery orders and can\'t be deleted.'
+        : `Failed to delete product: ${err?.message || JSON.stringify(err)}`)
     }
   }
 
@@ -229,8 +266,13 @@ export default function Products() {
           <label className="block text-sm font-semibold mb-2 text-gray-900">Quantity</label>
           <input
             type="number"
-            value={simpleQty}
-            onChange={(e) => setSimpleQty(Math.max(0, Number(e.target.value) || 0))}
+            value={simpleQty === 0 ? '' : simpleQty}
+            onChange={(e) => {
+              const val = e.target.value
+              if (val === '') { setSimpleQty(0); return }
+              const num = Number(val)
+              if (!isNaN(num)) setSimpleQty(Math.max(0, num))
+            }}
             onFocus={(e) => e.target.select()}
             onWheel={(e) => e.currentTarget.blur()}
             className="w-full border border-gray-300 rounded-lg px-4 py-2 mb-6 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -278,14 +320,19 @@ export default function Products() {
         </div>
 
         <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-            {Array.from({ length: 3 }, (_, i) => {
-              const start = i * 10
-              const diopRange = diopters.slice(start, start + 10)
-              const rangeStock = diopRange.reduce((sum, d) => sum + (stockData[d] || 0), 0)
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-6">
+            {[
+              { label: '1-10', min: 1, max: 10 },
+              { label: '10.5-20', min: 10.5, max: 20 },
+              { label: '20.5-30', min: 20.5, max: 30 },
+              { label: '30.5-40', min: 30.5, max: 40 }
+            ].map((range) => {
+              const rangeStock = diopters
+                .filter(d => { const v = parseFloat(d); return v >= range.min && v <= range.max })
+                .reduce((sum, d) => sum + (stockData[d] || 0), 0)
               return (
-                <div key={i} className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  <p className="text-sm text-gray-600 mb-1">Diopter {start + 1}-{start + 10}</p>
+                <div key={range.label} className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <p className="text-sm text-gray-600 mb-1">Diopter {range.label}</p>
                   <p className="text-2xl font-bold text-blue-600">{rangeStock}</p>
                 </div>
               )
@@ -307,11 +354,16 @@ export default function Products() {
                 <label className="w-20 font-medium text-gray-700">{diopter} D</label>
                 <input
                   type="number"
-                  value={stockData[diopter] || 0}
-                  onChange={(e) => setStockData({
-                    ...stockData,
-                    [diopter]: Math.max(0, Number(e.target.value) || 0)
-                  })}
+                  value={stockData[diopter] || ''}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    if (val === '') {
+                      setStockData({ ...stockData, [diopter]: 0 })
+                      return
+                    }
+                    const num = Number(val)
+                    if (!isNaN(num)) setStockData({ ...stockData, [diopter]: Math.max(0, num) })
+                  }}
                   onFocus={(e) => e.target.select()}
                   onWheel={(e) => e.currentTarget.blur()}
                   className="flex-1 border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -354,7 +406,11 @@ export default function Products() {
         </div>
         {!showForm && (
           <button
-            onClick={() => setShowForm(true)}
+            onClick={() => {
+              setEditingProductId(null)
+              setFormData({ sku: '', name: '', category: 'IOL Lens' })
+              setShowForm(true)
+            }}
             className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition"
           >
             + Add Product
@@ -364,8 +420,8 @@ export default function Products() {
 
       {showForm && (
         <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h3 className="text-xl font-bold mb-6">Add New Product</h3>
-          <form onSubmit={handleAddProduct} className="space-y-4">
+          <h3 className="text-xl font-bold mb-6">{editingProductId ? 'Edit Product' : 'Add New Product'}</h3>
+          <form onSubmit={handleSubmitProduct} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-semibold mb-2 text-gray-900">SKU</label>
@@ -408,14 +464,11 @@ export default function Products() {
                 disabled={loading}
                 className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg font-medium transition disabled:bg-gray-400"
               >
-                {loading ? 'Adding...' : 'Add Product'}
+                {loading ? 'Saving...' : editingProductId ? 'Update Product' : 'Add Product'}
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setShowForm(false)
-                  setFormData({ sku: '', name: '', category: 'IOL Lens' })
-                }}
+                onClick={handleCancelForm}
                 className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg font-medium hover:bg-gray-50 transition"
               >
                 Cancel
@@ -461,6 +514,12 @@ export default function Products() {
                       className="text-blue-600 hover:text-blue-700 font-medium text-sm"
                     >
                       Manage Stock
+                    </button>
+                    <button
+                      onClick={() => handleEditProduct(product)}
+                      className="text-indigo-600 hover:text-indigo-700 font-medium text-sm"
+                    >
+                      Edit
                     </button>
                     <button
                       onClick={() => handleDeleteProduct(product.id)}

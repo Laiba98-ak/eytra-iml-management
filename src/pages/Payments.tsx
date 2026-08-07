@@ -85,6 +85,10 @@ export default function Payments() {
       alert('Customer not found')
       return
     }
+    if (formData.amount > (selectedCustomer.previous_balance || 0)) {
+      alert(`Payment amount (PKR ${formData.amount.toLocaleString()}) exceeds ${selectedCustomer.name}'s outstanding balance (PKR ${(selectedCustomer.previous_balance || 0).toLocaleString()}). Advance payments aren't supported yet — enter an amount up to the current balance.`)
+      return
+    }
 
     setLoading(true)
     try {
@@ -144,13 +148,23 @@ export default function Payments() {
       const { error: deleteError } = await supabase.from('payments').delete().eq('id', payment.id)
       if (deleteError) throw deleteError
 
-      const customer = customers.find(c => c.id === payment.customer_id)
-      if (customer) {
-        const restoredBalance = (customer.previous_balance || 0) + payment.amount
+      // Re-fetch the balance right before restoring it (rather than trusting the
+      // possibly-stale `customers` list already in state) so two deletes done in quick
+      // succession don't both compute their new balance from the same starting number.
+      const { data: freshCustomer, error: fetchError } = await supabase
+        .from('customers')
+        .select('previous_balance')
+        .eq('id', payment.customer_id)
+        .single()
+
+      if (fetchError) throw fetchError
+
+      if (freshCustomer) {
+        const restoredBalance = (freshCustomer.previous_balance || 0) + payment.amount
         const { error: updateError } = await supabase
           .from('customers')
           .update({ previous_balance: restoredBalance })
-          .eq('id', customer.id)
+          .eq('id', payment.customer_id)
         if (updateError) throw updateError
       }
 
@@ -224,6 +238,7 @@ export default function Payments() {
                   value={formData.amount || ''}
                   onChange={(e) => setFormData({...formData, amount: Number(e.target.value) || 0})}
                   onFocus={(e) => e.target.select()}
+                  onWheel={(e) => e.currentTarget.blur()}
                   className="flex-1 border border-gray-300 rounded-lg px-4 py-3 text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder="Enter amount"
                   min="0"
@@ -250,13 +265,16 @@ export default function Payments() {
             {/* Payment Method */}
             <div>
               <label className="block text-sm font-semibold mb-3 text-gray-900">Payment Method</label>
-              <input
-                type="text"
+              <select
                 value={formData.paymentMethod}
                 onChange={(e) => setFormData({...formData, paymentMethod: e.target.value})}
                 className="w-full border border-gray-300 rounded-lg px-4 py-3 text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="e.g., Cash, Bank Transfer, Cheque"
-              />
+              >
+                <option value="">Select method (optional)</option>
+                <option value="Cash">Cash</option>
+                <option value="Cheque">Cheque</option>
+                <option value="Bank Transfer">Bank Transfer</option>
+              </select>
             </div>
 
             {/* Notes */}

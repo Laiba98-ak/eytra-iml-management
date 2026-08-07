@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 interface Customer {
   id: string
@@ -102,6 +102,13 @@ export default function Quotations() {
   const [viewingItems, setViewingItems] = useState<any[]>([])
   const [viewingCustomer, setViewingCustomer] = useState<Customer | null>(null)
   const [viewLoading, setViewLoading] = useState(false)
+  const qtyInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
+
+  // Number inputs/selects otherwise silently change value when the page is scrolled
+  // while they're focused — blur on wheel so scrolling never edits a line item.
+  const blurOnWheel = (e: React.WheelEvent<HTMLElement>) => {
+    e.currentTarget.blur()
+  }
 
   useEffect(() => {
     fetchData()
@@ -113,7 +120,7 @@ export default function Quotations() {
       const { data: customersData } = await supabase.from('customers').select('*')
       const { data: productsData } = await supabase.from('products').select('*')
       const { data: quotationsData } = await supabase.from('quotations').select('*').order('created_at', { ascending: false })
-      const { data: itemRows } = await supabase.from('quotation_items').select('quotation_id')
+      const { data: itemRows } = await supabase.from('quotation_items').select('quotation_id').limit(100000)
 
       const counts: Record<string, number> = {}
       ;(itemRows || []).forEach((row: any) => {
@@ -141,10 +148,12 @@ export default function Quotations() {
   }
 
   const getLiveMaxDocumentNumber = async () => {
+    // Explicit high limit — Supabase/PostgREST caps unbounded selects at 1000 rows by
+    // default, which would silently truncate the max-number scan once any table grows past that.
     const [{ data: invRows }, { data: quotRows }, { data: doRows }] = await Promise.all([
-      supabase.from('invoices').select('document_number'),
-      supabase.from('quotations').select('document_number'),
-      supabase.from('delivery_orders').select('document_number')
+      supabase.from('invoices').select('document_number').limit(100000),
+      supabase.from('quotations').select('document_number').limit(100000),
+      supabase.from('delivery_orders').select('document_number').limit(100000)
     ])
 
     const allNumbers = [
@@ -221,6 +230,11 @@ export default function Quotations() {
       alert('Please add at least one item')
       return
     }
+    // A Qty box left blank (not yet blurred) holds a transient 0 in state — clamp it
+    // back to 1 now so the preview/save never carries a 0-quantity line.
+    if (items.some(i => !i.quantity || i.quantity < 1)) {
+      setItems(items.map(i => (!i.quantity || i.quantity < 1) ? { ...i, quantity: 1 } : i))
+    }
     setShowPreview(true)
   }
 
@@ -234,11 +248,11 @@ export default function Quotations() {
       return
     }
 
-    const productIds = [...new Set(items.map(i => i.productId).filter(Boolean))]
-    if (productIds.length === 0) {
+    if (items.some(i => !i.productId)) {
       alert('Please select a product for every item before saving.')
       return
     }
+    const productIds = [...new Set(items.map(i => i.productId))]
 
     setLoading(true)
     try {
@@ -308,8 +322,14 @@ export default function Quotations() {
       })
 
       const { error: itemsError } = await supabase.from('quotation_items').insert(quotationItemRows)
-      if (itemsError) throw itemsError
+      if (itemsError) {
+        // Undo the header insert so a failed save never leaves a phantom quotation behind.
+        await supabase.from('quotations').delete().eq('id', savedQuotation.id)
+        throw itemsError
+      }
 
+      // Keep the preview/PDF in sync with the number actually claimed in the DB.
+      setSerialNumber(documentNumber)
       showToast(`Quotation ${documentNumber} saved successfully!`)
       setJustSaved(true)
       fetchData()
@@ -834,6 +854,13 @@ export default function Quotations() {
                             <select
                               value={item.diopter}
                               onChange={(e) => updateItem(item.id, 'diopter', e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault()
+                                  qtyInputRefs.current[item.id]?.focus()
+                                }
+                              }}
+                              onWheel={blurOnWheel}
                               className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                             >
                               {getProductDiopters(item.productId).map(d => (
@@ -845,13 +872,23 @@ export default function Quotations() {
                         <div>
                           <label className="text-xs text-gray-600 font-medium block mb-1">Qty</label>
                           <input
+                            ref={(el) => { qtyInputRefs.current[item.id] = el }}
                             type="number"
-                            value={item.quantity}
+                            value={item.quantity === 0 ? '' : item.quantity}
                             onChange={(e) => {
                               const val = e.target.value
-                              updateItem(item.id, 'quantity', val === '' ? 1 : Math.max(1, Number(val)))
+                              if (val === '') {
+                                updateItem(item.id, 'quantity', 0)
+                                return
+                              }
+                              const num = Number(val)
+                              if (!isNaN(num)) updateItem(item.id, 'quantity', Math.max(0, num))
+                            }}
+                            onBlur={() => {
+                              if (!item.quantity || item.quantity < 1) updateItem(item.id, 'quantity', 1)
                             }}
                             onFocus={(e) => e.target.select()}
+                            onWheel={blurOnWheel}
                             className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                             min="1"
                           />
@@ -863,6 +900,7 @@ export default function Quotations() {
                             value={item.unitPrice || ''}
                             onChange={(e) => updateItem(item.id, 'unitPrice', Number(e.target.value) || 0)}
                             onFocus={(e) => e.target.select()}
+                            onWheel={blurOnWheel}
                             className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                             placeholder="Enter price"
                             min="0"

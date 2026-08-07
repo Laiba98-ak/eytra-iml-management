@@ -91,6 +91,13 @@ export default function DeliveryOrders() {
   const [viewingItems, setViewingItems] = useState<any[]>([])
   const [viewingCustomer, setViewingCustomer] = useState<Customer | null>(null)
   const [viewLoading, setViewLoading] = useState(false)
+  const [editingDoId, setEditingDoId] = useState<string | null>(null)
+
+  // Number inputs otherwise silently change value when the page is scrolled
+  // while they're focused — blur on wheel so scrolling never edits a line item.
+  const blurOnWheel = (e: React.WheelEvent<HTMLElement>) => {
+    e.currentTarget.blur()
+  }
 
   useEffect(() => {
     fetchData()
@@ -102,7 +109,7 @@ export default function DeliveryOrders() {
       const { data: customersData } = await supabase.from('customers').select('*')
       const { data: productsData } = await supabase.from('products').select('*')
       const { data: doData } = await supabase.from('delivery_orders').select('*').order('created_at', { ascending: false })
-      const { data: itemRows } = await supabase.from('delivery_order_items').select('delivery_order_id')
+      const { data: itemRows } = await supabase.from('delivery_order_items').select('delivery_order_id').limit(100000)
 
       const counts: Record<string, number> = {}
       ;(itemRows || []).forEach((row: any) => {
@@ -119,10 +126,12 @@ export default function DeliveryOrders() {
   }
 
   const getLiveMaxDocumentNumber = async () => {
+    // Explicit high limit — Supabase/PostgREST caps unbounded selects at 1000 rows by
+    // default, which would silently truncate the max-number scan once any table grows past that.
     const [{ data: invRows }, { data: quotRows }, { data: doRows }] = await Promise.all([
-      supabase.from('invoices').select('document_number'),
-      supabase.from('quotations').select('document_number'),
-      supabase.from('delivery_orders').select('document_number')
+      supabase.from('invoices').select('document_number').limit(100000),
+      supabase.from('quotations').select('document_number').limit(100000),
+      supabase.from('delivery_orders').select('document_number').limit(100000)
     ])
 
     const allNumbers = [
@@ -201,6 +210,11 @@ export default function DeliveryOrders() {
       alert('Please add at least one item')
       return
     }
+    // A Qty box left blank (not yet blurred) holds a transient 0 in state — clamp it
+    // back to 1 now so the preview/save never carries a 0-quantity line.
+    if (items.some(i => !i.quantity || i.quantity < 1)) {
+      setItems(items.map(i => (!i.quantity || i.quantity < 1) ? { ...i, quantity: 1 } : i))
+    }
     setShowPreview(true)
   }
 
@@ -218,11 +232,11 @@ export default function DeliveryOrders() {
       return
     }
 
-    const productIds = [...new Set(items.map(i => i.productId).filter(Boolean))]
-    if (productIds.length === 0) {
+    if (items.some(i => !i.productId)) {
       alert('Please select a product for every item before saving.')
       return
     }
+    const productIds = [...new Set(items.map(i => i.productId))]
 
     setLoading(true)
     try {
@@ -232,6 +246,68 @@ export default function DeliveryOrders() {
         .in('id', productIds)
 
       if (productsFetchError) throw productsFetchError
+
+      if (editingDoId) {
+        // Editing an existing delivery order — update the header in place and
+        // replace its line items, but keep the original document_number/counter.
+        const { error: updateError } = await supabase
+          .from('delivery_orders')
+          .update({
+            customer_id: formData.customerId,
+            po_number: formData.poNumber,
+            document_date: formData.date,
+            delivery_date: formData.date,
+            subtotal: subtotal,
+            total: subtotal,
+            notes: formData.notes
+          })
+          .eq('id', editingDoId)
+
+        if (updateError) throw updateError
+
+        // Capture the old item rows' ids BEFORE writing anything new, and insert the
+        // replacement rows before deleting them — if the insert fails partway through,
+        // the original items are still there instead of being lost forever.
+        const { data: oldItemRows, error: oldItemsFetchError } = await supabase
+          .from('delivery_order_items')
+          .select('id')
+          .eq('delivery_order_id', editingDoId)
+
+        if (oldItemsFetchError) throw oldItemsFetchError
+
+        const doItemRows = items.map(item => {
+          const product = fullProducts?.find(p => p.id === item.productId)
+          return {
+            delivery_order_id: editingDoId,
+            product_id: item.productId,
+            product_name_snapshot: item.productName,
+            product_sku_snapshot: product?.sku || null,
+            diopter_snapshot: null,
+            quantity: item.quantity,
+            unit_price: item.unitPrice,
+            line_total: item.quantity * item.unitPrice
+          }
+        })
+
+        const { error: itemsInsertError } = await supabase.from('delivery_order_items').insert(doItemRows)
+        if (itemsInsertError) throw itemsInsertError
+
+        const oldItemIds = (oldItemRows || []).map((row: any) => row.id)
+        if (oldItemIds.length > 0) {
+          const { error: deleteItemsError } = await supabase
+            .from('delivery_order_items')
+            .delete()
+            .in('id', oldItemIds)
+
+          if (deleteItemsError) throw deleteItemsError
+        }
+
+        showToast(`Delivery Order ${serialNumber} updated successfully!`)
+        setJustSaved(true)
+        fetchData()
+        setLoading(false)
+        return
+      }
 
       // Claim the next number based on what's ACTUALLY in use right now across
       // Invoice + Quotation + Delivery Order — self-healing regardless of delete order.
@@ -291,8 +367,14 @@ export default function DeliveryOrders() {
       })
 
       const { error: itemsError } = await supabase.from('delivery_order_items').insert(doItemRows)
-      if (itemsError) throw itemsError
+      if (itemsError) {
+        // Undo the header insert so a failed save never leaves a phantom delivery order behind.
+        await supabase.from('delivery_orders').delete().eq('id', savedDO.id)
+        throw itemsError
+      }
 
+      // Keep the preview/PDF in sync with the number actually claimed in the DB.
+      setSerialNumber(documentNumber)
       showToast(`Delivery Order ${documentNumber} saved successfully!`)
       setJustSaved(true)
       fetchData()
@@ -370,10 +452,65 @@ export default function DeliveryOrders() {
     setViewingCustomer(null)
   }
 
+  const handleEditDO = async (doId: string) => {
+    setViewLoading(true)
+    try {
+      const deliveryOrder = savedDeliveryOrders.find(d => d.id === doId)
+      if (!deliveryOrder) {
+        alert('Delivery order not found')
+        return
+      }
+
+      const { data: itemRows, error: itemsError } = await supabase
+        .from('delivery_order_items')
+        .select('*')
+        .eq('delivery_order_id', doId)
+
+      if (itemsError) throw itemsError
+
+      let customer = customers.find(c => c.id === deliveryOrder.customer_id) || null
+      if (!customer) {
+        const { data: customerData } = await supabase
+          .from('customers')
+          .select('*')
+          .eq('id', deliveryOrder.customer_id)
+          .single()
+        customer = customerData || null
+      }
+
+      setFormData({
+        customerId: deliveryOrder.customer_id,
+        poNumber: deliveryOrder.po_number || '',
+        date: deliveryOrder.document_date,
+        notes: deliveryOrder.notes || ''
+      })
+      setSelectedCustomer(customer)
+      setItems((itemRows || []).map((row: any) => ({
+        id: row.id,
+        productId: row.product_id || '',
+        productName: row.product_name_snapshot || '',
+        quantity: row.quantity,
+        unitPrice: row.unit_price,
+        diopter: row.diopter_snapshot != null ? String(row.diopter_snapshot) : ''
+      })))
+      setSerialNumber(deliveryOrder.document_number)
+      setEditingDoId(doId)
+      setJustSaved(false)
+      setShowPreview(false)
+      setShowForm(true)
+    } catch (err: any) {
+      console.error('Error loading delivery order for edit:', err)
+      alert(`Failed to open delivery order for editing: ${err?.message || JSON.stringify(err)}`)
+    } finally {
+      setViewLoading(false)
+    }
+  }
+
   const handleReset = () => {
     setShowForm(false)
     setShowPreview(false)
     setJustSaved(false)
+    setEditingDoId(null)
     setItems([])
     setFormData({
       customerId: '',
@@ -715,7 +852,7 @@ export default function DeliveryOrders() {
               disabled={loading}
               className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition disabled:bg-gray-400"
             >
-              {loading ? 'Saving...' : 'Save Delivery Order'}
+              {loading ? 'Saving...' : editingDoId ? 'Update Delivery Order' : 'Save Delivery Order'}
             </button>
           )}
           <button
@@ -754,7 +891,7 @@ export default function DeliveryOrders() {
       {showForm && (
         <div className="bg-white rounded-lg border border-gray-200 p-6 md:p-8">
           <div className="flex justify-between items-center mb-8">
-            <h3 className="text-xl font-bold">Create New Delivery Order</h3>
+            <h3 className="text-xl font-bold">{editingDoId ? 'Edit Delivery Order' : 'Create New Delivery Order'}</h3>
             <span className="text-sm bg-blue-100 text-blue-700 px-3 py-1 rounded-full font-medium">{serialNumber}</span>
           </div>
 
@@ -832,12 +969,21 @@ export default function DeliveryOrders() {
                           <label className="text-xs text-gray-600 font-medium block mb-1">Qty</label>
                           <input
                             type="number"
-                            value={item.quantity}
+                            value={item.quantity === 0 ? '' : item.quantity}
                             onChange={(e) => {
-                              const val = e.target.value;
-                              updateItem(item.id, 'quantity', val === '' ? 1 : Math.max(1, Number(val)));
+                              const val = e.target.value
+                              if (val === '') {
+                                updateItem(item.id, 'quantity', 0)
+                                return
+                              }
+                              const num = Number(val)
+                              if (!isNaN(num)) updateItem(item.id, 'quantity', Math.max(0, num))
+                            }}
+                            onBlur={() => {
+                              if (!item.quantity || item.quantity < 1) updateItem(item.id, 'quantity', 1)
                             }}
                             onFocus={(e) => e.target.select()}
+                            onWheel={blurOnWheel}
                             className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                             min="1"
                           />
@@ -849,6 +995,7 @@ export default function DeliveryOrders() {
                             value={item.unitPrice || ''}
                             onChange={(e) => updateItem(item.id, 'unitPrice', Number(e.target.value) || 0)}
                             onFocus={(e) => e.target.select()}
+                            onWheel={blurOnWheel}
                             className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                             placeholder="0"
                             min="0"
@@ -951,6 +1098,13 @@ export default function DeliveryOrders() {
                         className="text-blue-600 hover:text-blue-700 font-medium text-sm disabled:text-gray-400"
                       >
                         View
+                      </button>
+                      <button
+                        onClick={() => handleEditDO(do_.id)}
+                        disabled={viewLoading}
+                        className="text-indigo-600 hover:text-indigo-700 font-medium text-sm disabled:text-gray-400"
+                      >
+                        Edit
                       </button>
                       <button
                         onClick={() => handleDelete(do_.id)}
