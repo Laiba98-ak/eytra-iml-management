@@ -797,6 +797,13 @@ export default function Invoices() {
             </div>
           </div>
 
+          {viewingInvoice.notes && (
+            <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-8">
+              <p className="font-semibold text-gray-900 mb-2">Notes:</p>
+              <p className="text-gray-700 text-sm">{viewingInvoice.notes}</p>
+            </div>
+          )}
+
           {/* Footer */}
           <div className="border-t-2 border-gray-800 pt-6">
             <p className="font-semibold text-gray-900 mb-2">Make all checks payable to "EYTRA"</p>
@@ -919,6 +926,13 @@ export default function Invoices() {
               </div>
             </div>
           </div>
+
+          {formData.notes && (
+            <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-8">
+              <p className="font-semibold text-gray-900 mb-2">Notes:</p>
+              <p className="text-gray-700 text-sm">{formData.notes}</p>
+            </div>
+          )}
 
           {/* Footer */}
           <div className="border-t-2 border-gray-800 pt-6">
